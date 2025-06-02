@@ -3,7 +3,8 @@
 A mobile Android application for mapping Burning Man camp lots before and after the event. MoopMapper helps create a comprehensive visual record of the playa's transformation by allowing participants to capture and upload snapshots of their assigned areas.
 
 ## Overview
-![img.png](img.png)
+![img_1.png](img_1.png)
+![img_2.png](img_2.png)
 
 MoopMapper enables Burning Man participants to contribute to a collective mapping effort by:
 - Taking photos of camp lots and areas before setup
