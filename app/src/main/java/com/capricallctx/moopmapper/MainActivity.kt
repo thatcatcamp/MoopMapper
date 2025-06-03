@@ -142,6 +142,24 @@ fun LaunchScreen() {
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
+                    onClick = { 
+                        val intent = Intent(context, ImageBrowserActivity::class.java)
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3))
+                ) {
+                    Text(
+                        text = "Browse Previous Images",
+                        fontSize = 18.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
                     onClick = { /* TODO: Implement upload */ },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -191,7 +209,9 @@ fun LaunchScreen() {
                 TextButton(
                     onClick = { 
                         showSnapshotDialog = false
-                        // TODO: Start camera/mapping activity
+                        val intent = Intent(context, SimpleMotionDetectionActivity::class.java)
+                        intent.putExtra("uploadKey", deviceId)
+                        context.startActivity(intent)
                     }
                 ) {
                     Text("Start Mapping")
