@@ -64,11 +64,7 @@ jobs:
       run: |
         mkdir -p dist
         cp app/build/outputs/apk/debug/*.apk dist/MoopMapper-debug-${{ env.VERSION_NAME }}.apk
-        if [ -f "${{ steps.sign_apk.outputs.signedReleaseFile }}" ]; then
-          cp "${{ steps.sign_apk.outputs.signedReleaseFile }}" dist/MoopMapper-release-signed-${{ env.VERSION_NAME }}.apk
-        else
-          cp app/build/outputs/apk/release/*.apk dist/MoopMapper-release-unsigned-${{ env.VERSION_NAME }}.apk
-        fi
+        cp app/build/outputs/apk/release/*.apk dist/MoopMapper-release-signed-${{ env.VERSION_NAME }}.apk
 
     - name: Upload versioned debug APK
       uses: actions/upload-artifact@v4
@@ -83,11 +79,10 @@ jobs:
         path: dist/MoopMapper-release-*.apk
 
     - name: Upload signed APK separately
-      if: steps.sign_apk.outputs.signedReleaseFile
       uses: actions/upload-artifact@v4
       with:
         name: signed-release-apk-${{ github.run_number }}
-        path: ${{ steps.sign_apk.outputs.signedReleaseFile }}
+        path: app/build/outputs/apk/release/app-release.apk
 
     - name: Create build summary
       run: |
@@ -100,16 +95,11 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 📱 APK Files Generated" >> $GITHUB_STEP_SUMMARY
         echo "- **Debug APK:** MoopMapper-debug-${{ env.VERSION_NAME }}.apk" >> $GITHUB_STEP_SUMMARY
-        if [ -f "${{ steps.sign_apk.outputs.signedReleaseFile }}" ]; then
-          echo "- **Signed Release APK:** MoopMapper-release-signed-${{ env.VERSION_NAME }}.apk ✅" >> $GITHUB_STEP_SUMMARY
-          echo "- **APK Signing:** Success with developer certificate" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "- **Unsigned Release APK:** MoopMapper-release-unsigned-${{ env.VERSION_NAME }}.apk ⚠️" >> $GITHUB_STEP_SUMMARY
-          echo "- **APK Signing:** Failed or skipped" >> $GITHUB_STEP_SUMMARY
-        fi
+        echo "- **Signed Release APK:** MoopMapper-release-signed-${{ env.VERSION_NAME }}.apk ✅" >> $GITHUB_STEP_SUMMARY
+        echo "- **APK Signing:** Success with developer certificate" >> $GITHUB_STEP_SUMMARY
 
     - name: Create Git tag
-      if: github.ref == 'refs/heads/main' && steps.sign_apk.outputs.signedReleaseFile
+      if: github.ref == 'refs/heads/main'
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -119,7 +109,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Create GitHub Release
-      if: github.ref == 'refs/heads/main' && steps.sign_apk.outputs.signedReleaseFile
+      if: github.ref == 'refs/heads/main'
       id: create_release
       uses: actions/create-release@v1
       env:
@@ -183,18 +173,18 @@ jobs:
         prerelease: false
 
     - name: Upload Release APK
-      if: github.ref == 'refs/heads/main' && steps.sign_apk.outputs.signedReleaseFile
+      if: github.ref == 'refs/heads/main'
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ${{ steps.sign_apk.outputs.signedReleaseFile }}
+        asset_path: app/build/outputs/apk/release/app-release.apk
         asset_name: MoopMapper-v${{ env.VERSION_NAME }}.apk
         asset_content_type: application/vnd.android.package-archive
 
     - name: Update build summary with release info
-      if: github.ref == 'refs/heads/main' && steps.sign_apk.outputs.signedReleaseFile
+      if: github.ref == 'refs/heads/main'
       run: |
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 🎉 GitHub Release Created" >> $GITHUB_STEP_SUMMARY
