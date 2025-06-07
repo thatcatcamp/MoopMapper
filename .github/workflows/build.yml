@@ -9,20 +9,20 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
-        
+
     - name: Setup Gradle
       uses: gradle/gradle-build-action@v2
-      
+
     - name: Cache Gradle packages
       uses: actions/cache@v3
       with:
@@ -32,89 +32,34 @@ jobs:
         key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
         restore-keys: |
           ${{ runner.os }}-gradle-
-          
+
     - name: Make gradlew executable
       run: chmod +x gradlew
-      
+
     - name: Set version info
       run: |
         echo "VERSION_NAME=1.0+${{ github.run_number }}" >> $GITHUB_ENV
         echo "VERSION_CODE=$((1000000 + ${{ github.run_number }}))" >> $GITHUB_ENV
         echo "Building version: 1.0+${{ github.run_number }} (code: $((1000000 + ${{ github.run_number }})))"
-      
+
     - name: Run tests
       run: ./gradlew test
-      
+
+    - name: Set up signing config
+      run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore.jks
+
+    - name: Build and sign release APK
+      run: ./gradlew assembleRelease
+      env:
+          SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+
     - name: Build debug APK
       run: ./gradlew assembleDebug
-      
-    - name: Build release APK
-      run: ./gradlew assembleRelease
-      
-    - name: Sign release APK
-      id: sign_apk
-      continue-on-error: true
-      run: |
-        # Decode keystore
-        echo "${{ secrets.BASESTORE_BASE64 }}" | base64 -d > original.keystore
-        
-        # Try to convert keystore to JKS format if it's PKCS12
-        if keytool -list -keystore original.keystore -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -storetype PKCS12 2>/dev/null; then
-          echo "Converting PKCS12 to JKS format..."
-          keytool -importkeystore \
-            -srckeystore original.keystore \
-            -srcstoretype PKCS12 \
-            -srcstorepass "${{ secrets.KEYSTORE_PASSWORD }}" \
-            -destkeystore release.keystore \
-            -deststoretype JKS \
-            -deststorepass "${{ secrets.KEYSTORE_PASSWORD }}" \
-            -destkeypass "${{ secrets.KEY_PASSWORD }}" || cp original.keystore release.keystore
-        else
-          cp original.keystore release.keystore
-        fi
-        
-        # Try apksigner first (more modern)
-        if $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
-          --ks release.keystore \
-          --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" \
-          --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
-          --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
-          --out app-release-signed.apk \
-          app/build/outputs/apk/release/app-release.apk 2>/dev/null; then
-          echo "APK signed with apksigner"
-        else
-          echo "Trying jarsigner fallback..."
-          # Fallback to jarsigner
-          if jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
-            -keystore release.keystore \
-            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" \
-            -keypass "${{ secrets.KEY_PASSWORD }}" \
-            app/build/outputs/apk/release/app-release.apk \
-            "${{ secrets.KEY_ALIAS }}"; then
-            
-            $ANDROID_HOME/build-tools/34.0.0/zipalign -v 4 \
-              app/build/outputs/apk/release/app-release.apk \
-              app-release-signed.apk
-            echo "APK signed with jarsigner"
-          else
-            # Use unsigned as fallback
-            cp app/build/outputs/apk/release/app-release.apk app-release-signed.apk
-            echo "Using unsigned APK"
-          fi
-        fi
-        
-        # Set output
-        echo "signedReleaseFile=$(pwd)/app-release-signed.apk" >> $GITHUB_OUTPUT
-        
-        # Verify result
-        if [ -f "app-release-signed.apk" ]; then
-          echo "APK ready"
-          ls -la app-release-signed.apk
-        else
-          echo "APK creation failed"
-          exit 1
-        fi
-      
+
+
     - name: Rename APK files with version
       run: |
         mkdir -p dist
@@ -124,26 +69,26 @@ jobs:
         else
           cp app/build/outputs/apk/release/*.apk dist/MoopMapper-release-unsigned-${{ env.VERSION_NAME }}.apk
         fi
-        
+
     - name: Upload versioned debug APK
       uses: actions/upload-artifact@v4
       with:
         name: debug-apk-${{ github.run_number }}
         path: dist/MoopMapper-debug-*.apk
-        
+
     - name: Upload versioned release APK
       uses: actions/upload-artifact@v4
       with:
         name: release-apk-${{ github.run_number }}
         path: dist/MoopMapper-release-*.apk
-        
+
     - name: Upload signed APK separately
       if: steps.sign_apk.outputs.signedReleaseFile
       uses: actions/upload-artifact@v4
       with:
         name: signed-release-apk-${{ github.run_number }}
         path: ${{ steps.sign_apk.outputs.signedReleaseFile }}
-        
+
     - name: Create build summary
       run: |
         echo "## 🚀 Build Summary" >> $GITHUB_STEP_SUMMARY
@@ -162,7 +107,7 @@ jobs:
           echo "- **Unsigned Release APK:** MoopMapper-release-unsigned-${{ env.VERSION_NAME }}.apk ⚠️" >> $GITHUB_STEP_SUMMARY
           echo "- **APK Signing:** Failed or skipped" >> $GITHUB_STEP_SUMMARY
         fi
-        
+
     - name: Create Git tag
       if: github.ref == 'refs/heads/main' && steps.sign_apk.outputs.signedReleaseFile
       run: |
@@ -172,7 +117,7 @@ jobs:
         git push origin "v${{ env.VERSION_NAME }}"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
+
     - name: Create GitHub Release
       if: github.ref == 'refs/heads/main' && steps.sign_apk.outputs.signedReleaseFile
       id: create_release
@@ -184,17 +129,17 @@ jobs:
         release_name: MoopMapper v${{ env.VERSION_NAME }}
         body: |
           ## 🗺️ MoopMapper Release v${{ env.VERSION_NAME }}
-          
+
           ### 🚀 Automated Release
           This release was automatically generated from the latest main branch build.
-          
+
           ### Version Information
           - **App Version:** ${{ env.VERSION_NAME }}
           - **Version Code:** ${{ env.VERSION_CODE }}
           - **Build Number:** ${{ github.run_number }}
           - **Commit:** ${{ github.sha }}
           - **Branch:** main
-          
+
           ### Features
           - 📱 Smart auto-mapping with motion detection
           - 📍 GPS-based photo capture for Burning Man lot mapping
@@ -202,13 +147,13 @@ jobs:
           - 🖼️ Photo browser with metadata and full-screen viewing
           - ☁️ FastAPI upload service integration
           - 🔄 Complete session management with return navigation
-          
+
           ### Installation
           1. **Download:** Click the APK file below to download
           2. **Enable Installation:** Go to Android Settings → Security → Enable "Install from Unknown Sources"
           3. **Install:** Open the downloaded APK file and follow installation prompts
           4. **Permissions:** Grant camera and location permissions when prompted
-          
+
           ### Quick Start Guide
           1. **Launch:** Open MoopMapper to get your unique upload key
           2. **Start Mapping:** Tap "Snapshot" to begin a mapping session
@@ -216,27 +161,27 @@ jobs:
           4. **Review:** Use "Browse Previous Images" to review all captured photos
           5. **Upload:** Use your upload key to upload photos to the mapping service
           6. **Complete:** Tap "Complete Session & Return" when finished mapping
-          
+
           ### What's New in This Build
           - Motion detection threshold: 2% for sensitive auto-capture
           - Manual capture button for testing
           - Enhanced photo browser with thumbnail grid
           - Improved file naming with upload key + timestamp + sequence
           - Complete session workflow for easy navigation
-          
+
           ### Technical Details
           - **Signed APK:** Production-ready with developer certificate
           - **Min Android:** API 24 (Android 7.0)
           - **Target Android:** API 35 (Android 15)
           - **Architecture:** ARM64, ARM32, x86_64
-          
+
           ---
           🤖 **Automatically built and released by GitHub Actions**
-          
+
           📅 **Built:** $(date)
         draft: false
         prerelease: false
-        
+
     - name: Upload Release APK
       if: github.ref == 'refs/heads/main' && steps.sign_apk.outputs.signedReleaseFile
       uses: actions/upload-release-asset@v1
@@ -247,7 +192,7 @@ jobs:
         asset_path: ${{ steps.sign_apk.outputs.signedReleaseFile }}
         asset_name: MoopMapper-v${{ env.VERSION_NAME }}.apk
         asset_content_type: application/vnd.android.package-archive
-        
+
     - name: Update build summary with release info
       if: github.ref == 'refs/heads/main' && steps.sign_apk.outputs.signedReleaseFile
       run: |
