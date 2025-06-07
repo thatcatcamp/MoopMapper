@@ -78,5 +78,5 @@ fun getVersionCode(): Int {
 
 fun getVersionName(): String {
     val buildNumber = System.getenv("GITHUB_RUN_NUMBER") ?: "0"
-    return "1.0.$buildNumber"
+    return "1.0+$buildNumber"
 }

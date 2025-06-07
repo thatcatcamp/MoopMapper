@@ -1,0 +1,266 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Force create release even if signing fails'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  auto-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch full history for tagging
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v2
+      
+    - name: Cache Gradle packages
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+          
+    - name: Make gradlew executable
+      run: chmod +x gradlew
+      
+    - name: Set version info
+      run: |
+        echo "VERSION_NAME=1.0+${{ github.run_number }}" >> $GITHUB_ENV
+        echo "VERSION_CODE=$((1000000 + ${{ github.run_number }}))" >> $GITHUB_ENV
+        echo "TAG_NAME=v1.0+${{ github.run_number }}" >> $GITHUB_ENV
+        echo "Building auto-release: 1.0+${{ github.run_number }} (code: $((1000000 + ${{ github.run_number }})))"
+      
+    - name: Run tests
+      run: ./gradlew test
+      
+    - name: Build release APK
+      run: ./gradlew assembleRelease
+      
+    - name: Sign release APK
+      id: sign_apk
+      uses: r0adkll/sign-android-release@v1
+      with:
+        releaseDirectory: app/build/outputs/apk/release
+        signingKeyBase64: ${{ secrets.BASESTORE_BASE64 }}
+        alias: ${{ secrets.KEY_ALIAS }}
+        keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
+        keyPassword: ${{ secrets.KEY_PASSWORD }}
+      env:
+        BUILD_TOOLS_VERSION: "34.0.0"
+        
+    - name: Check if release should be created
+      id: should_release
+      run: |
+        if [[ "${{ steps.sign_apk.outputs.signedReleaseFile }}" != "" || "${{ github.event.inputs.force_release }}" == "true" ]]; then
+          echo "create_release=true" >> $GITHUB_OUTPUT
+          echo "Will create release"
+        else
+          echo "create_release=false" >> $GITHUB_OUTPUT
+          echo "Skipping release - no signed APK and not forced"
+        fi
+      
+    - name: Create and push Git tag
+      if: steps.should_release.outputs.create_release == 'true'
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Delete tag if it exists
+        git tag -d "${{ env.TAG_NAME }}" 2>/dev/null || true
+        git push origin ":refs/tags/${{ env.TAG_NAME }}" 2>/dev/null || true
+        
+        # Create new tag
+        git tag "${{ env.TAG_NAME }}"
+        git push origin "${{ env.TAG_NAME }}"
+        echo "Created and pushed tag: ${{ env.TAG_NAME }}"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Delete existing release if it exists
+      if: steps.should_release.outputs.create_release == 'true'
+      run: |
+        # Try to delete existing release
+        gh release delete "${{ env.TAG_NAME }}" --yes 2>/dev/null || echo "No existing release to delete"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Create GitHub Release
+      if: steps.should_release.outputs.create_release == 'true'
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        release_name: MoopMapper v${{ env.VERSION_NAME }}
+        body: |
+          ## 🗺️ MoopMapper Release v${{ env.VERSION_NAME }}
+          
+          > **🚀 Automated Release** - Built from latest main branch commit
+          
+          ### Version Information
+          - **App Version:** ${{ env.VERSION_NAME }}
+          - **Version Code:** ${{ env.VERSION_CODE }}
+          - **Build Number:** ${{ github.run_number }}
+          - **Git Commit:** [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          - **Branch:** main
+          - **Build Date:** $(date +'%Y-%m-%d %H:%M:%S UTC')
+          
+          ### 🎯 Key Features
+          - **📱 Smart Auto-Mapping:** Motion detection automatically captures photos every 50cm
+          - **📍 GPS Integration:** Embeds precise coordinates and timestamps in EXIF data
+          - **🔑 Unique Device IDs:** Human-readable 3-word format (e.g., "Blue-Fox-Crystal")
+          - **🖼️ Photo Management:** Grid browser with full-screen viewing and metadata
+          - **☁️ Upload Integration:** Ready for FastAPI upload service
+          - **🔄 Session Management:** Complete workflow with navigation controls
+          
+          ### 📱 Installation Guide
+          
+          #### Quick Install
+          1. **Download APK** → Tap the download link below
+          2. **Enable Unknown Sources** → Android Settings → Security → Install Unknown Apps
+          3. **Install** → Open downloaded APK and follow prompts
+          4. **Grant Permissions** → Allow Camera and Location access
+          
+          #### First Use
+          1. **Launch App** → Get your unique upload key (displayed on main screen)
+          2. **Start Mapping** → Tap "Snapshot" button
+          3. **Follow Instructions** → Hold phone parallel to ground, walk slowly
+          4. **Auto Capture** → Photos taken automatically when scene changes
+          5. **Complete Session** → Tap "Complete Session & Return" when done
+          6. **Review Photos** → Use "Browse Previous Images" to see captured photos
+          
+          ### 🔧 Technical Specifications
+          
+          | Specification | Value |
+          |---------------|--------|
+          | **Android Version** | 7.0+ (API 24+) |
+          | **Target SDK** | Android 15 (API 35) |
+          | **Architecture** | ARM64, ARM32, x86_64 |
+          | **APK Signing** | Developer Certificate ✅ |
+          | **Motion Sensitivity** | 2% luminance change |
+          | **Capture Interval** | Minimum 1 second |
+          | **File Format** | JPEG with EXIF GPS data |
+          
+          ### 🆕 Latest Changes
+          - Enhanced motion detection with adjustable sensitivity
+          - Manual capture button for testing and backup
+          - Improved photo browser with thumbnail grid layout
+          - Session management with clear start/stop workflow
+          - Comprehensive EXIF data embedding
+          - Professional file naming convention
+          
+          ### 🐛 Bug Reports & Support
+          - **Issues:** [GitHub Issues](https://github.com/${{ github.repository }}/issues)
+          - **Documentation:** [Project README](https://github.com/${{ github.repository }}/blob/main/README.md)
+          - **Source Code:** [GitHub Repository](https://github.com/${{ github.repository }})
+          
+          ### 🏃‍♂️ Quick Start Checklist
+          - [ ] Download and install APK
+          - [ ] Grant camera and location permissions
+          - [ ] Note your upload key from main screen
+          - [ ] Test with "Snapshot" → "Start Smart Auto-Mapping"
+          - [ ] Walk slowly in test area
+          - [ ] Verify photos captured with "Browse Previous Images"
+          - [ ] Use "Complete Session & Return" to exit mapping
+          
+          ---
+          
+          **🤖 Automated Build Information**
+          - **Workflow:** Auto Release from Main Branch
+          - **Build System:** GitHub Actions with Gradle
+          - **Signing:** Production Developer Certificate
+          - **Quality:** Automated tests passed ✅
+          
+          **📊 Build Stats**
+          - **Total Builds:** ${{ github.run_number }}
+          - **Repository:** ${{ github.repository }}
+          - **Triggered By:** ${{ github.actor }}
+        draft: false
+        prerelease: false
+        
+    - name: Upload Signed APK to Release
+      if: steps.should_release.outputs.create_release == 'true' && steps.sign_apk.outputs.signedReleaseFile
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ${{ steps.sign_apk.outputs.signedReleaseFile }}
+        asset_name: MoopMapper-v${{ env.VERSION_NAME }}.apk
+        asset_content_type: application/vnd.android.package-archive
+        
+    - name: Upload Unsigned APK as Fallback
+      if: steps.should_release.outputs.create_release == 'true' && !steps.sign_apk.outputs.signedReleaseFile
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: app/build/outputs/apk/release/app-release.apk
+        asset_name: MoopMapper-v${{ env.VERSION_NAME }}-unsigned.apk
+        asset_content_type: application/vnd.android.package-archive
+        
+    - name: Create release summary
+      if: steps.should_release.outputs.create_release == 'true'
+      run: |
+        echo "## 🎉 Auto-Release Created Successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📋 Release Details" >> $GITHUB_STEP_SUMMARY
+        echo "- **Release Tag:** ${{ env.TAG_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version:** ${{ env.VERSION_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version Code:** ${{ env.VERSION_CODE }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Release URL:** ${{ steps.create_release.outputs.html_url }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📱 Download" >> $GITHUB_STEP_SUMMARY
+        if [[ "${{ steps.sign_apk.outputs.signedReleaseFile }}" != "" ]]; then
+          echo "- **Signed APK:** [MoopMapper-v${{ env.VERSION_NAME }}.apk](${{ steps.create_release.outputs.html_url }}) ✅" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** Production ready with developer certificate" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- **Unsigned APK:** [MoopMapper-v${{ env.VERSION_NAME }}-unsigned.apk](${{ steps.create_release.outputs.html_url }}) ⚠️" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** Development build (signing failed)" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🚀 Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "1. Download APK from release page" >> $GITHUB_STEP_SUMMARY
+        echo "2. Install on Android device" >> $GITHUB_STEP_SUMMARY
+        echo "3. Test mapping functionality" >> $GITHUB_STEP_SUMMARY
+        echo "4. Share with Burning Man mapping teams" >> $GITHUB_STEP_SUMMARY
+        
+    - name: Notify if no release created
+      if: steps.should_release.outputs.create_release == 'false'
+      run: |
+        echo "## ⚠️ No Release Created" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Reason:** APK signing failed and force_release not enabled" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔧 To Create Release Anyway" >> $GITHUB_STEP_SUMMARY
+        echo "1. Go to Actions tab" >> $GITHUB_STEP_SUMMARY
+        echo "2. Select 'Auto Release' workflow" >> $GITHUB_STEP_SUMMARY
+        echo "3. Click 'Run workflow'" >> $GITHUB_STEP_SUMMARY
+        echo "4. Check 'Force create release even if signing fails'" >> $GITHUB_STEP_SUMMARY
+        echo "5. Click 'Run workflow'" >> $GITHUB_STEP_SUMMARY

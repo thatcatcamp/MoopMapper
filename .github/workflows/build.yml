@@ -36,6 +36,12 @@ jobs:
     - name: Make gradlew executable
       run: chmod +x gradlew
       
+    - name: Set version info
+      run: |
+        echo "VERSION_NAME=1.0+${{ github.run_number }}" >> $GITHUB_ENV
+        echo "VERSION_CODE=$((1000000 + ${{ github.run_number }}))" >> $GITHUB_ENV
+        echo "Building version: 1.0+${{ github.run_number }} (code: $((1000000 + ${{ github.run_number }})))"
+      
     - name: Run tests
       run: ./gradlew test
       
@@ -45,14 +51,157 @@ jobs:
     - name: Build release APK
       run: ./gradlew assembleRelease
       
-    - name: Upload debug APK
-      uses: actions/upload-artifact@v4
+    - name: Sign release APK
+      id: sign_apk
+      uses: r0adkll/sign-android-release@v1
       with:
-        name: debug-apk
-        path: app/build/outputs/apk/debug/*.apk
+        releaseDirectory: app/build/outputs/apk/release
+        signingKeyBase64: ${{ secrets.BASESTORE_BASE64 }}
+        alias: ${{ secrets.KEY_ALIAS }}
+        keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
+        keyPassword: ${{ secrets.KEY_PASSWORD }}
+      env:
+        BUILD_TOOLS_VERSION: "34.0.0"
+      
+    - name: Rename APK files with version
+      run: |
+        mkdir -p dist
+        cp app/build/outputs/apk/debug/*.apk dist/MoopMapper-debug-${{ env.VERSION_NAME }}.apk
+        if [ -f "${{ steps.sign_apk.outputs.signedReleaseFile }}" ]; then
+          cp "${{ steps.sign_apk.outputs.signedReleaseFile }}" dist/MoopMapper-release-signed-${{ env.VERSION_NAME }}.apk
+        else
+          cp app/build/outputs/apk/release/*.apk dist/MoopMapper-release-unsigned-${{ env.VERSION_NAME }}.apk
+        fi
         
-    - name: Upload release APK
+    - name: Upload versioned debug APK
       uses: actions/upload-artifact@v4
       with:
-        name: release-apk
-        path: app/build/outputs/apk/release/*.apk
+        name: debug-apk-${{ github.run_number }}
+        path: dist/MoopMapper-debug-*.apk
+        
+    - name: Upload versioned release APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-apk-${{ github.run_number }}
+        path: dist/MoopMapper-release-*.apk
+        
+    - name: Upload signed APK separately
+      if: steps.sign_apk.outputs.signedReleaseFile
+      uses: actions/upload-artifact@v4
+      with:
+        name: signed-release-apk-${{ github.run_number }}
+        path: ${{ steps.sign_apk.outputs.signedReleaseFile }}
+        
+    - name: Create build summary
+      run: |
+        echo "## 🚀 Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version:** ${{ env.VERSION_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version Code:** ${{ env.VERSION_CODE }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Build Number:** ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📱 APK Files Generated" >> $GITHUB_STEP_SUMMARY
+        echo "- **Debug APK:** MoopMapper-debug-${{ env.VERSION_NAME }}.apk" >> $GITHUB_STEP_SUMMARY
+        if [ -f "${{ steps.sign_apk.outputs.signedReleaseFile }}" ]; then
+          echo "- **Signed Release APK:** MoopMapper-release-signed-${{ env.VERSION_NAME }}.apk ✅" >> $GITHUB_STEP_SUMMARY
+          echo "- **APK Signing:** Success with developer certificate" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- **Unsigned Release APK:** MoopMapper-release-unsigned-${{ env.VERSION_NAME }}.apk ⚠️" >> $GITHUB_STEP_SUMMARY
+          echo "- **APK Signing:** Failed or skipped" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+    - name: Create Git tag
+      if: github.ref == 'refs/heads/main' && steps.sign_apk.outputs.signedReleaseFile
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git tag "v${{ env.VERSION_NAME }}"
+        git push origin "v${{ env.VERSION_NAME }}"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Create GitHub Release
+      if: github.ref == 'refs/heads/main' && steps.sign_apk.outputs.signedReleaseFile
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ env.VERSION_NAME }}
+        release_name: MoopMapper v${{ env.VERSION_NAME }}
+        body: |
+          ## 🗺️ MoopMapper Release v${{ env.VERSION_NAME }}
+          
+          ### 🚀 Automated Release
+          This release was automatically generated from the latest main branch build.
+          
+          ### Version Information
+          - **App Version:** ${{ env.VERSION_NAME }}
+          - **Version Code:** ${{ env.VERSION_CODE }}
+          - **Build Number:** ${{ github.run_number }}
+          - **Commit:** ${{ github.sha }}
+          - **Branch:** main
+          
+          ### Features
+          - 📱 Smart auto-mapping with motion detection
+          - 📍 GPS-based photo capture for Burning Man lot mapping
+          - 🔑 Unique device ID generation (3-word format)
+          - 🖼️ Photo browser with metadata and full-screen viewing
+          - ☁️ FastAPI upload service integration
+          - 🔄 Complete session management with return navigation
+          
+          ### Installation
+          1. **Download:** Click the APK file below to download
+          2. **Enable Installation:** Go to Android Settings → Security → Enable "Install from Unknown Sources"
+          3. **Install:** Open the downloaded APK file and follow installation prompts
+          4. **Permissions:** Grant camera and location permissions when prompted
+          
+          ### Quick Start Guide
+          1. **Launch:** Open MoopMapper to get your unique upload key
+          2. **Start Mapping:** Tap "Snapshot" to begin a mapping session
+          3. **Walk & Capture:** Walk slowly while the app automatically captures photos based on scene changes
+          4. **Review:** Use "Browse Previous Images" to review all captured photos
+          5. **Upload:** Use your upload key to upload photos to the mapping service
+          6. **Complete:** Tap "Complete Session & Return" when finished mapping
+          
+          ### What's New in This Build
+          - Motion detection threshold: 2% for sensitive auto-capture
+          - Manual capture button for testing
+          - Enhanced photo browser with thumbnail grid
+          - Improved file naming with upload key + timestamp + sequence
+          - Complete session workflow for easy navigation
+          
+          ### Technical Details
+          - **Signed APK:** Production-ready with developer certificate
+          - **Min Android:** API 24 (Android 7.0)
+          - **Target Android:** API 35 (Android 15)
+          - **Architecture:** ARM64, ARM32, x86_64
+          
+          ---
+          🤖 **Automatically built and released by GitHub Actions**
+          
+          📅 **Built:** $(date)
+        draft: false
+        prerelease: false
+        
+    - name: Upload Release APK
+      if: github.ref == 'refs/heads/main' && steps.sign_apk.outputs.signedReleaseFile
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ${{ steps.sign_apk.outputs.signedReleaseFile }}
+        asset_name: MoopMapper-v${{ env.VERSION_NAME }}.apk
+        asset_content_type: application/vnd.android.package-archive
+        
+    - name: Update build summary with release info
+      if: github.ref == 'refs/heads/main' && steps.sign_apk.outputs.signedReleaseFile
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🎉 GitHub Release Created" >> $GITHUB_STEP_SUMMARY
+        echo "- **Release Tag:** v${{ env.VERSION_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Release URL:** ${{ steps.create_release.outputs.html_url }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Download APK:** [MoopMapper-v${{ env.VERSION_NAME }}.apk](${{ steps.create_release.outputs.html_url }})" >> $GITHUB_STEP_SUMMARY
+        echo "- **Auto-Release:** Triggered from main branch build ✅" >> $GITHUB_STEP_SUMMARY

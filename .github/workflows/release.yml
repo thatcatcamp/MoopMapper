@@ -35,9 +35,16 @@ jobs:
     - name: Make gradlew executable
       run: chmod +x gradlew
       
-    - name: Extract version from tag
+    - name: Extract version from tag and set build info
       id: get_version
-      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      run: |
+        TAG_VERSION=${GITHUB_REF#refs/tags/v}
+        APP_VERSION="1.0+${{ github.run_number }}"
+        VERSION_CODE=$((1000000 + ${{ github.run_number }}))
+        echo "TAG_VERSION=$TAG_VERSION" >> $GITHUB_OUTPUT
+        echo "APP_VERSION=$APP_VERSION" >> $GITHUB_OUTPUT
+        echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_OUTPUT
+        echo "Building release: $APP_VERSION (code: $VERSION_CODE) for tag: $TAG_VERSION"
       
     - name: Run tests
       run: ./gradlew test
@@ -50,9 +57,9 @@ jobs:
       uses: r0adkll/sign-android-release@v1
       with:
         releaseDirectory: app/build/outputs/apk/release
-        signingKeyBase64: ${{ secrets.SIGNING_KEY }}
-        alias: ${{ secrets.ALIAS }}
-        keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+        signingKeyBase64: ${{ secrets.BASESTORE_BASE64 }}
+        alias: ${{ secrets.KEY_ALIAS }}
+        keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
         keyPassword: ${{ secrets.KEY_PASSWORD }}
       env:
         BUILD_TOOLS_VERSION: "34.0.0"
@@ -64,16 +71,39 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ github.ref }}
-        release_name: MoopMapper v${{ steps.get_version.outputs.VERSION }}
+        release_name: MoopMapper ${{ steps.get_version.outputs.TAG_VERSION }}
         body: |
-          ## Changes in this Release
-          - Automated release of MoopMapper v${{ steps.get_version.outputs.VERSION }}
-          - Build number: ${{ github.run_number }}
+          ## 🗺️ MoopMapper Release ${{ steps.get_version.outputs.TAG_VERSION }}
           
-          ## Installation
-          Download the APK file below and install on your Android device.
+          ### Version Information
+          - **App Version:** ${{ steps.get_version.outputs.APP_VERSION }}
+          - **Version Code:** ${{ steps.get_version.outputs.VERSION_CODE }}
+          - **Build Number:** ${{ github.run_number }}
+          - **Git Tag:** ${{ steps.get_version.outputs.TAG_VERSION }}
+          - **Commit:** ${{ github.sha }}
           
-          **Note:** You may need to enable "Install from Unknown Sources" in your device settings.
+          ### Features
+          - Smart auto-mapping with motion detection
+          - GPS-based photo capture for Burning Man lot mapping
+          - Unique device ID generation (3-word format)
+          - Photo browser with metadata
+          - FastAPI upload service integration
+          
+          ### Installation
+          1. Download the APK file below
+          2. Enable "Install from Unknown Sources" in Android settings
+          3. Install the APK on your Android device
+          4. Grant camera and location permissions when prompted
+          
+          ### Usage
+          1. Launch app to get your unique upload key
+          2. Use "Snapshot" to start mapping session
+          3. Walk slowly while phone captures photos automatically
+          4. Use "Browse Previous Images" to review captured photos
+          5. Upload photos via the upload service
+          
+          ---
+          🤖 **Automated Release** - Built with GitHub Actions
         draft: false
         prerelease: false
         
@@ -84,5 +114,5 @@ jobs:
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: ${{ steps.sign_apk.outputs.signedReleaseFile }}
-        asset_name: MoopMapper-v${{ steps.get_version.outputs.VERSION }}.apk
+        asset_name: MoopMapper-${{ steps.get_version.outputs.APP_VERSION }}.apk
         asset_content_type: application/vnd.android.package-archive
