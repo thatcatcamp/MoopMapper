@@ -79,6 +79,25 @@ jobs:
           echo "create_release=false" >> $GITHUB_OUTPUT
           echo "Skipping release - no AAB found and not forced"
         fi
+    - name: Sign AAB
+      uses: r0adkll/sign-android-release@v1
+      id: sign_app
+      with:
+            releaseDirectory: app/build/outputs/bundle/release
+            signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
+            alias: ${{ secrets.KEY_ALIAS }}
+            keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
+            keyPassword: ${{ secrets.KEY_PASSWORD }}
+
+    - name: Upload AAB to Play Store (Internal Track)
+      uses: r0adkll/upload-google-play@v1
+      with:
+        serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+        packageName: com.capricallctx.moopmapper
+        releaseFiles: ${{ steps.sign_app.outputs.signedReleaseFile }}
+        track: internal # You can change this to 'alpha' or 'beta' for other pre-release tracks
+        status: completed # Use 'draft' to create a draft release that you manually promote in the Play Console
+        whatsNewDirectory: app/src/main/play/release-notes/en-US
 
     - name: Create and push Git tag
       if: steps.should_release.outputs.create_release == 'true'
