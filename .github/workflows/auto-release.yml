@@ -96,7 +96,7 @@ jobs:
         packageName: com.capricallctx.moopmapper
         releaseFiles: ${{ steps.sign_app.outputs.signedReleaseFile }}
         track: internal # You can change this to 'alpha' or 'beta' for other pre-release tracks
-        status: completed # Use 'draft' to create a draft release that you manually promote in the Play Console
+        status: draft # Use 'draft' to create a draft release that you manually promote in the Play Console
 
     - name: Create and push Git tag
       if: steps.should_release.outputs.create_release == 'true'
