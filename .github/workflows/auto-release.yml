@@ -60,7 +60,6 @@ jobs:
     - name: Set up signing config
       run: |
         echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore.jks
-
     - name: Build and sign release APK
       env:
           SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -68,10 +67,8 @@ jobs:
           SIGNING_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
       run: |
             ls -l *.jks
-          echo $SIGNING_KEY_ALIAS
+            echo $SIGNING_KEY_ALIAS
             ./gradlew assembleRelease
-
-
     - name: Check if release should be created
       id: should_release
       run: |
