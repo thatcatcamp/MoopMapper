@@ -60,7 +60,7 @@ jobs:
     - name: Set up signing config
       run: |
         echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore.jks
-    - name: Build and sign release APK
+    - name: Build and sign release AAB
       env:
           SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -68,16 +68,16 @@ jobs:
       run: |
             ls -l *.jks
             echo $SIGNING_KEY_ALIAS
-            ./gradlew assembleRelease
+            ./gradlew bundleRelease
     - name: Check if release should be created
       id: should_release
       run: |
-        if [[ -f "app/build/outputs/apk/release/app-release.apk" || "${{ github.event.inputs.force_release }}" == "true" ]]; then
+        if [[ -f "app/build/outputs/bundle/release/app-release.aab" || "${{ github.event.inputs.force_release }}" == "true" ]]; then
           echo "create_release=true" >> $GITHUB_OUTPUT
           echo "Will create release"
         else
           echo "create_release=false" >> $GITHUB_OUTPUT
-          echo "Skipping release - no APK found and not forced"
+          echo "Skipping release - no AAB found and not forced"
         fi
 
     - name: Create and push Git tag
@@ -138,9 +138,9 @@ jobs:
           ### 📱 Installation Guide
 
           #### Quick Install
-          1. **Download APK** → Tap the download link below
-          2. **Enable Unknown Sources** → Android Settings → Security → Install Unknown Apps
-          3. **Install** → Open downloaded APK and follow prompts
+          1. **Download AAB** → Download the Android App Bundle below
+          2. **Install via ADB** → Use `adb install-multiple` or upload to Google Play Store
+          3. **Alternative APK** → Use bundletool to generate APK: `bundletool build-apks --bundle=app.aab --output=app.apks`
           4. **Grant Permissions** → Allow Camera and Location access
 
           #### First Use
@@ -158,7 +158,7 @@ jobs:
           | **Android Version** | 7.0+ (API 24+) |
           | **Target SDK** | Android 15 (API 35) |
           | **Architecture** | ARM64, ARM32, x86_64 |
-          | **APK Signing** | Developer Certificate ✅ |
+          | **AAB Signing** | Developer Certificate ✅ |
           | **Motion Sensitivity** | 2% luminance change |
           | **Capture Interval** | Minimum 1 second |
           | **File Format** | JPEG with EXIF GPS data |
@@ -177,7 +177,7 @@ jobs:
           - **Source Code:** [GitHub Repository](https://github.com/${{ github.repository }})
 
           ### 🏃‍♂️ Quick Start Checklist
-          - [ ] Download and install APK
+          - [ ] Download AAB and convert to APK or upload to Google Play
           - [ ] Grant camera and location permissions
           - [ ] Note your upload key from main screen
           - [ ] Test with "Snapshot" → "Start Smart Auto-Mapping"
@@ -200,16 +200,16 @@ jobs:
         draft: false
         prerelease: false
 
-    - name: Upload Release APK
+    - name: Upload Release AAB
       if: steps.should_release.outputs.create_release == 'true'
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: app/build/outputs/apk/release/app-release.apk
-        asset_name: MoopMapper-v${{ env.VERSION_NAME }}.apk
-        asset_content_type: application/vnd.android.package-archive
+        asset_path: app/build/outputs/bundle/release/app-release.aab
+        asset_name: MoopMapper-v${{ env.VERSION_NAME }}.aab
+        asset_content_type: application/octet-stream
 
     - name: Create release summary
       if: steps.should_release.outputs.create_release == 'true'
@@ -223,12 +223,12 @@ jobs:
         echo "- **Release URL:** ${{ steps.create_release.outputs.html_url }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 📱 Download" >> $GITHUB_STEP_SUMMARY
-        echo "- **Signed APK:** [MoopMapper-v${{ env.VERSION_NAME }}.apk](${{ steps.create_release.outputs.html_url }}) ✅" >> $GITHUB_STEP_SUMMARY
-        echo "- **Status:** Production ready with developer certificate" >> $GITHUB_STEP_SUMMARY
+        echo "- **Signed AAB:** [MoopMapper-v${{ env.VERSION_NAME }}.aab](${{ steps.create_release.outputs.html_url }}) ✅" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status:** Production ready for Google Play Store" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 🚀 Next Steps" >> $GITHUB_STEP_SUMMARY
-        echo "1. Download APK from release page" >> $GITHUB_STEP_SUMMARY
-        echo "2. Install on Android device" >> $GITHUB_STEP_SUMMARY
+        echo "1. Download AAB from release page" >> $GITHUB_STEP_SUMMARY
+        echo "2. Upload to Google Play Console or convert to APK for testing" >> $GITHUB_STEP_SUMMARY
         echo "3. Test mapping functionality" >> $GITHUB_STEP_SUMMARY
         echo "4. Share with Burning Man mapping teams" >> $GITHUB_STEP_SUMMARY
 
@@ -237,7 +237,7 @@ jobs:
       run: |
         echo "## ⚠️ No Release Created" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Reason:** APK signing failed and force_release not enabled" >> $GITHUB_STEP_SUMMARY
+        echo "**Reason:** AAB build failed and force_release not enabled" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 🔧 To Create Release Anyway" >> $GITHUB_STEP_SUMMARY
         echo "1. Go to Actions tab" >> $GITHUB_STEP_SUMMARY
