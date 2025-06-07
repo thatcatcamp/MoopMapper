@@ -53,15 +53,35 @@ jobs:
       
     - name: Sign release APK
       id: sign_apk
-      uses: r0adkll/sign-android-release@v1
-      with:
-        releaseDirectory: app/build/outputs/apk/release
-        signingKeyBase64: ${{ secrets.BASESTORE_BASE64 }}
-        alias: ${{ secrets.KEY_ALIAS }}
-        keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-        keyPassword: ${{ secrets.KEY_PASSWORD }}
-      env:
-        BUILD_TOOLS_VERSION: "34.0.0"
+      continue-on-error: true
+      run: |
+        # Decode keystore
+        echo "${{ secrets.BASESTORE_BASE64 }}" | base64 -d > release.keystore
+        
+        # Sign APK using jarsigner (more compatible than apksigner)
+        jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
+          -keystore release.keystore \
+          -storepass "${{ secrets.KEYSTORE_PASSWORD }}" \
+          -keypass "${{ secrets.KEY_PASSWORD }}" \
+          app/build/outputs/apk/release/app-release.apk \
+          "${{ secrets.KEY_ALIAS }}"
+        
+        # Zipalign the signed APK
+        $ANDROID_HOME/build-tools/34.0.0/zipalign -v 4 \
+          app/build/outputs/apk/release/app-release.apk \
+          app-release-signed.apk
+        
+        # Set output
+        echo "signedReleaseFile=$(pwd)/app-release-signed.apk" >> $GITHUB_OUTPUT
+        
+        # Verify signing worked
+        if [ -f "app-release-signed.apk" ]; then
+          echo "APK signing successful"
+          ls -la app-release-signed.apk
+        else
+          echo "APK signing failed"
+          exit 1
+        fi
       
     - name: Rename APK files with version
       run: |
