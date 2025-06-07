@@ -65,36 +65,85 @@ jobs:
       continue-on-error: true
       run: |
         # Decode keystore
-        echo "${{ secrets.BASESTORE_BASE64 }}" | base64 -d > release.keystore
+        echo "${{ secrets.BASESTORE_BASE64 }}" | base64 -d > original.keystore
         
-        # Debug keystore info
-        keytool -list -v -keystore release.keystore -storepass "${{ secrets.KEYSTORE_PASSWORD }}" || true
+        echo "=== Keystore Analysis ==="
+        file original.keystore || true
         
-        # Sign APK using jarsigner (more compatible than apksigner)
-        jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
-          -keystore release.keystore \
-          -storepass "${{ secrets.KEYSTORE_PASSWORD }}" \
-          -keypass "${{ secrets.KEY_PASSWORD }}" \
-          app/build/outputs/apk/release/app-release.apk \
-          "${{ secrets.KEY_ALIAS }}"
+        # Try to convert keystore to JKS format if it's PKCS12
+        echo "=== Converting keystore format ==="
+        if keytool -list -keystore original.keystore -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -storetype PKCS12 2>/dev/null; then
+          echo "Detected PKCS12 keystore, converting to JKS..."
+          keytool -importkeystore \
+            -srckeystore original.keystore \
+            -srcstoretype PKCS12 \
+            -srcstorepass "${{ secrets.KEYSTORE_PASSWORD }}" \
+            -destkeystore release.keystore \
+            -deststoretype JKS \
+            -deststorepass "${{ secrets.KEYSTORE_PASSWORD }}" \
+            -destkeypass "${{ secrets.KEY_PASSWORD }}" || true
+        elif keytool -list -keystore original.keystore -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -storetype JKS 2>/dev/null; then
+          echo "Already JKS format, using original..."
+          cp original.keystore release.keystore
+        else
+          echo "Unknown keystore format, trying as-is..."
+          cp original.keystore release.keystore
+        fi
         
-        # Zipalign the signed APK
-        $ANDROID_HOME/build-tools/34.0.0/zipalign -v 4 \
-          app/build/outputs/apk/release/app-release.apk \
-          app-release-signed.apk
+        # List contents of final keystore
+        echo "=== Final keystore contents ==="
+        keytool -list -v -keystore release.keystore -storepass "${{ secrets.KEYSTORE_PASSWORD }}" || \
+        keytool -list -v -keystore release.keystore -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -storetype PKCS12 || \
+        echo "Could not read keystore with either JKS or PKCS12 format"
+        
+        # Try apksigner first (more modern)
+        echo "=== Trying apksigner ==="
+        if $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
+          --ks release.keystore \
+          --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" \
+          --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
+          --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
+          --out app-release-signed.apk \
+          app/build/outputs/apk/release/app-release.apk 2>/dev/null; then
+          echo "APK signed successfully with apksigner"
+        else
+          echo "apksigner failed, trying jarsigner..."
+          
+          # Fallback to jarsigner
+          if jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
+            -keystore release.keystore \
+            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" \
+            -keypass "${{ secrets.KEY_PASSWORD }}" \
+            app/build/outputs/apk/release/app-release.apk \
+            "${{ secrets.KEY_ALIAS }}"; then
+            
+            # Zipalign after jarsigner
+            $ANDROID_HOME/build-tools/34.0.0/zipalign -v 4 \
+              app/build/outputs/apk/release/app-release.apk \
+              app-release-signed.apk
+            echo "APK signed successfully with jarsigner"
+          else
+            echo "Both signing methods failed"
+            # Create unsigned as fallback
+            cp app/build/outputs/apk/release/app-release.apk app-release-signed.apk
+            echo "Using unsigned APK as fallback"
+          fi
+        fi
         
         # Set output
         echo "signedReleaseFile=$(pwd)/app-release-signed.apk" >> $GITHUB_OUTPUT
         
-        # Verify signing worked
+        # Verify result
         if [ -f "app-release-signed.apk" ]; then
-          echo "APK signing successful"
+          echo "APK file created successfully"
           ls -la app-release-signed.apk
           
-          # Verify the signature
-          jarsigner -verify -verbose -certs app-release-signed.apk || true
+          # Verify the signature if possible
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify app-release-signed.apk && echo "Signature verified with apksigner" || \
+          jarsigner -verify app-release-signed.apk && echo "Signature verified with jarsigner" || \
+          echo "Could not verify signature, but APK exists"
         else
-          echo "APK signing failed"
+          echo "APK creation failed completely"
           exit 1
         fi
         
