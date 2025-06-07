@@ -52,9 +52,10 @@ class SimpleMotionDetectionActivity : ComponentActivity() {
     
     // Simplified motion detection variables
     private var previousLuminance: Float = 0f
-    private var motionThreshold = 0.05f // 5% luminance change
+    private var motionThreshold = 0.02f // 2% luminance change (more sensitive)
     private var lastCaptureTime = 0L
-    private var minCaptureInterval = 2000L // Minimum 2 seconds between captures
+    private var minCaptureInterval = 1000L // Minimum 1 second between captures
+    private var frameCount = 0
     
     private val requestPermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -107,6 +108,8 @@ class SimpleMotionDetectionActivity : ComponentActivity() {
                         sequenceNumber = 0
                         previousLuminance = 0f
                         lastCaptureTime = 0L
+                        frameCount = 0
+                        Log.d("MotionDetection", "Started mapping session")
                     },
                     onStopMapping = {
                         isActive = false
@@ -118,6 +121,7 @@ class SimpleMotionDetectionActivity : ComponentActivity() {
                     isActive = isActive,
                     motionLevel = motionLevel,
                     currentLocation = location,
+                    motionThreshold = motionThreshold,
                     onPhotoTaken = { count ->
                         photoCount = count
                         sequence = sequenceNumber
@@ -209,6 +213,7 @@ class SimpleMotionDetectionActivity : ComponentActivity() {
                 return
             }
 
+            frameCount++
             val currentTime = System.currentTimeMillis()
             
             // Calculate average luminance
@@ -217,20 +222,27 @@ class SimpleMotionDetectionActivity : ComponentActivity() {
             if (previousLuminance > 0f) {
                 val luminanceChange = abs(currentLuminance - previousLuminance) / previousLuminance
                 
+                Log.d("MotionDetection", "Frame $frameCount: Luminance change: ${String.format("%.4f", luminanceChange)}, Threshold: $motionThreshold")
+                
                 // Trigger capture if enough luminance change and enough time has passed
                 if (luminanceChange > motionThreshold && 
                     currentTime - lastCaptureTime > minCaptureInterval) {
                     
+                    Log.d("MotionDetection", "Triggering capture! Change: ${String.format("%.4f", luminanceChange)}")
                     capturePhoto { count ->
                         sessionPhotoCount = count
                     }
                     lastCaptureTime = currentTime
+                } else if (frameCount % 30 == 0) { // Log every 30 frames for debugging
+                    Log.d("MotionDetection", "No capture - Change: ${String.format("%.4f", luminanceChange)}, Time since last: ${currentTime - lastCaptureTime}ms")
                 }
                 
                 // Update UI with motion level
                 runOnUiThread {
                     // Could add motion level callback here
                 }
+            } else {
+                Log.d("MotionDetection", "Setting initial luminance: $currentLuminance")
             }
             
             previousLuminance = currentLuminance
@@ -243,19 +255,24 @@ class SimpleMotionDetectionActivity : ComponentActivity() {
             val yBuffer = image.planes[0].buffer
             val ySize = yBuffer.remaining()
             
+            // Reset buffer position
+            yBuffer.rewind()
+            
             var sum = 0L
-            val stepSize = 100 // Sample every 100th pixel for performance
+            val stepSize = 50 // Sample every 50th pixel for better sensitivity
             var sampleCount = 0
             
-            for (i in 0 until ySize step stepSize) {
-                yBuffer.position(i)
-                if (yBuffer.hasRemaining()) {
-                    sum += (yBuffer.get().toInt() and 0xFF)
-                    sampleCount++
-                }
+            val bytes = ByteArray(ySize)
+            yBuffer.get(bytes)
+            
+            for (i in bytes.indices step stepSize) {
+                sum += (bytes[i].toInt() and 0xFF)
+                sampleCount++
             }
             
-            return if (sampleCount > 0) sum.toFloat() / sampleCount else 0f
+            val result = if (sampleCount > 0) sum.toFloat() / sampleCount else 0f
+            Log.v("MotionDetection", "Calculated luminance: $result from $sampleCount samples")
+            return result
             
         } catch (e: Exception) {
             Log.e("SimpleMotion", "Failed to calculate luminance", e)
@@ -355,7 +372,8 @@ fun SimpleMotionScreen(
     motionLevel: Float,
     currentLocation: Location?,
     onPhotoTaken: (Int) -> Unit,
-    onMotionDetected: (Float) -> Unit
+    onMotionDetected: (Float) -> Unit,
+    motionThreshold: Float = 0.02f
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -516,11 +534,26 @@ fun SimpleMotionScreen(
                     
                     if (isActive) {
                         Text(
-                            text = "Walk slowly and steadily.\nPhotos captured automatically based on scene changes.",
+                            text = "Walk slowly and steadily.\nPhotos captured automatically based on scene changes.\nThreshold: ${String.format("%.1f", motionThreshold * 100)}%",
                             color = Color.Yellow,
                             fontSize = 12.sp,
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
+                        
+                        // Manual capture button for testing
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { 
+                                Log.d("MotionDetection", "Manual capture triggered")
+                                onPhotoTaken(photoCount + 1)
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFFF9800)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Manual Capture (Test)", fontSize = 14.sp)
+                        }
                     }
                     
                     Spacer(modifier = Modifier.height(16.dp))
